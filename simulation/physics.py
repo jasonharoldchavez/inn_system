@@ -5,6 +5,7 @@ class PhysicalSimulator:
     def __init__(self):
         # Hidden Truths (True state of the universe)
         self.true_battery_capacity_as = 3600.0  # 1.0 Ah nominal
+        self.battery_charge_as = 3600.0  # Initial stored charge
         self.true_core_temp_k = 298.15          # Start at room temp (25°C)
         self.true_harvester_efficiency = 1.0    # 100% capacity initially
         self.battery_throughput_ah = 0.0
@@ -39,12 +40,35 @@ class PhysicalSimulator:
         power_law = (self.battery_throughput_ah + 0.01) ** 0.55
         self.true_battery_capacity_as -= 0.015 * power_law * arrhenius * dt_sec
         self.true_battery_capacity_as = max(self.true_battery_capacity_as, 10.0)
+
+        # Update stored charge from net current. Positive current drains
+        # the battery; negative current charges it. Capacity fade limits
+        # the maximum charge that can remain stored.
+        self.battery_charge_as = max(
+            0.0,
+            min(
+                self.true_battery_capacity_as,
+                self.battery_charge_as - net_current * dt_sec,
+            ),
+        )
         
-        # 5. Thermal Dynamics (Conjugate Heat Transfer Approximation)
-        # T_dot = Heat_In - Heat_Out
+        # 5. Thermal Dynamics
+        # Exact integration of the first-order thermal model,
+        # assuming constant heat input and ambient temperature
+        # during this timestep.
         heat_generated = total_power_demand * 0.15
-        heat_dissipated = 0.02 * (self.true_core_temp_k - self.ambient_temp_k)
-        self.true_core_temp_k += (heat_generated - heat_dissipated) * dt_sec
+        thermal_conductance = 0.02
+
+        equilibrium_temp = (
+            self.ambient_temp_k
+            + heat_generated / thermal_conductance
+        )
+        decay = math.exp(-thermal_conductance * dt_sec)
+
+        self.true_core_temp_k = (
+            equilibrium_temp
+            + (self.true_core_temp_k - equilibrium_temp) * decay
+        )
         
         # 6. Apply Injected Faults & Material Degradation
         # Temperature sensor drift (slow thermal-cycling walk)
@@ -64,5 +88,8 @@ class PhysicalSimulator:
         return {
             "temperature_k": measured_temp,
             "voltage_v": measured_voltage,
-            "harvester_active": not self.microcracks_occurred
+            "harvester_active": not self.microcracks_occurred,
+            "battery_soc": (
+                self.battery_charge_as / self.true_battery_capacity_as
+            ),
         }

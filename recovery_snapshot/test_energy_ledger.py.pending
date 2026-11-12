@@ -1,0 +1,121 @@
+import math
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from simulation.physics import PhysicalSimulator
+
+
+class TestEnergyLedger(unittest.TestCase):
+
+    REQUIRED_FIELDS = {
+        "stored_before_j",
+        "harvested_j",
+        "load_demand_j",
+        "harvest_to_load_j",
+        "battery_charge_j",
+        "battery_discharge_j",
+        "load_served_j",
+        "unmet_load_j",
+        "curtailed_harvest_j",
+        "capacity_fade_loss_j",
+        "stored_after_j",
+        "balance_error_j",
+    }
+
+    def test_energy_ledger_reports_all_energy_flows(self):
+        sim = PhysicalSimulator()
+        sim.base_vibration_g = 10.0
+        sim.battery_charge_as = 3000.0
+
+        sim.step(10.0, 1_000_000, -40.0)
+
+        ledger = sim.last_energy_balance
+
+        self.assertTrue(self.REQUIRED_FIELDS.issubset(ledger))
+
+        for field in self.REQUIRED_FIELDS:
+            self.assertTrue(
+                math.isfinite(ledger[field]),
+                f"Invalid energy value: {field}",
+            )
+
+    def test_energy_balance_closes_during_harvesting(self):
+        sim = PhysicalSimulator()
+        sim.base_vibration_g = 10.0
+        sim.battery_charge_as = 3000.0
+
+        sim.step(10.0, 1_000_000, -40.0)
+
+        ledger = sim.last_energy_balance
+
+        self.assertGreater(
+            ledger["harvested_j"],
+            ledger["load_demand_j"],
+        )
+
+        self.assertGreater(ledger["battery_charge_j"], 0.0)
+
+        self.assertAlmostEqual(
+            ledger["balance_error_j"],
+            0.0,
+            places=7,
+        )
+
+    def test_excess_harvest_is_curtailed_when_battery_is_full(self):
+        sim = PhysicalSimulator()
+        sim.base_vibration_g = 10.0
+        sim.battery_charge_as = sim.true_battery_capacity_as
+
+        sim.step(10.0, 1_000_000, -40.0)
+
+        ledger = sim.last_energy_balance
+
+        self.assertGreater(
+            ledger["curtailed_harvest_j"],
+            0.0,
+        )
+
+        self.assertLessEqual(
+            sim.battery_charge_as,
+            sim.true_battery_capacity_as,
+        )
+
+        self.assertAlmostEqual(
+            ledger["balance_error_j"],
+            0.0,
+            places=7,
+        )
+
+    def test_unmet_load_is_reported_when_battery_is_empty(self):
+        sim = PhysicalSimulator()
+        sim.base_vibration_g = 0.0
+        sim.battery_charge_as = 0.0
+
+        sim.step(10.0, 120_000_000, 14.0)
+
+        ledger = sim.last_energy_balance
+
+        self.assertGreater(
+            ledger["unmet_load_j"],
+            0.0,
+        )
+
+        self.assertAlmostEqual(
+            ledger["load_demand_j"],
+            ledger["load_served_j"] + ledger["unmet_load_j"],
+            places=7,
+        )
+
+        self.assertAlmostEqual(
+            ledger["balance_error_j"],
+            0.0,
+            places=7,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

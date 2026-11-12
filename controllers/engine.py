@@ -1,3 +1,4 @@
+import math
 class CyberPhysicalController:
     def __init__(self):
         # Controller State Estimations
@@ -31,7 +32,15 @@ class CyberPhysicalController:
             self.kalman_r_covariance = max(0.01, self.kalman_r_covariance * 0.5)
             
         # Update Estimated SoC based on filtered state
-        self.estimated_soc = max(0.0, min(1.0, self.estimated_soc - (0.0001 * dt)))
+        # Use the simulator's reported state of charge when available.
+        # Retain the previous estimate if the field is absent or invalid.
+        measured_soc = sensor_data.get("battery_soc")
+        if (
+            isinstance(measured_soc, (int, float))
+            and not isinstance(measured_soc, bool)
+            and math.isfinite(measured_soc)
+        ):
+            self.estimated_soc = max(0.0, min(1.0, measured_soc))
 
     def coordinate(self, dt: float) -> dict:
         # Look-ahead 120 seconds into the future
